@@ -1,4 +1,5 @@
 import { AutoRebalancer, RebalancerConfig } from './autoRebalancer';
+import { ArbitrageExecutor, ArbitrageScanner, Opportunity } from '../arbitrage';
 
 function baseConfig(overrides: Partial<RebalancerConfig> = {}): RebalancerConfig {
   return {
@@ -48,5 +49,30 @@ describe('AutoRebalancer RPC lag wiring', () => {
 
     expect(report!.severity).toBe('ok');
     expect(report!.lagLedgers).toBe(0);
+  });
+});
+
+describe('AutoRebalancer quote freshness', () => {
+  it('declines a stale quote without calling the executor', async () => {
+    const staleOpportunity: Opportunity = {
+      pool_id: 'POOL-2',
+      quote_timestamp: Date.now() - 2_000,
+      current_apy: 1500,
+      projected_apy: 3000,
+      il_risk: 50,
+      net_profit: BigInt(1_000_000),
+      apy_delta: 1500,
+      recommended: true,
+    };
+    jest.spyOn(ArbitrageScanner.prototype, 'findOpportunities').mockResolvedValue([staleOpportunity]);
+    const execute = jest.spyOn(ArbitrageExecutor.prototype, 'executeArbitrage');
+    const keeper = new AutoRebalancer(baseConfig({ maxQuoteAgeMs: 1_000 }));
+
+    const results = await keeper.run();
+
+    expect(results).toHaveLength(1);
+    expect(results[0].success).toBe(false);
+    expect(results[0].message).toMatch(/Quote is stale/);
+    expect(execute).not.toHaveBeenCalled();
   });
 });
